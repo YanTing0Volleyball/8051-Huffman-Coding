@@ -1,0 +1,614 @@
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     1
+
+
+MACRO ASSEMBLER A51 V8.2.7.0
+OBJECT MODULE PLACED IN .\Objects\final_project.obj
+ASSEMBLER INVOKED BY: C:\Keil_v5\C51\BIN\A51.EXE final_project.a51 SET(SMALL) DEBUG PRINT(.\Listings\final_project.lst) 
+                      OBJECT(.\Objects\final_project.obj) EP
+
+LOC  OBJ            LINE     SOURCE
+
+                       1     ; Huffman Coding for 8051
+                       2     ; Internal RAM Planning:
+                       3     ; 30H-4FH: For Frequency Table (A-Z Frequency)
+                       4     ; 07H: For Stack Pointer Start (inital stack pointer)
+                       5     ; 70H: For Template Space 
+                       6     ; 50H: For Node Pool Count
+                       7     ; 51H, 53H: For Position Recorder
+                       8     ; 52H: For Position Counter
+                       9     ;
+                      10     ; External Ram Planning:
+                      11     ; 0100H ~ 01FFH: For Node Pool
+                      12     ; 0300H ~ 03FFH: For Node List
+                      13     ; 0400H ~ 04FFH: For Huffman Table
+                      14     ; 0500H ~ 05FFH: For Result Output
+                      15     ;
+                      16     ; Structure Define
+                      17     ; Node: Frequenc, ASCII, Left Node Address, Right Node Address
+                      18     ; ASCII: 00 => No ASCII, Left Node: FF => No Left Node, Right Node: FF => No Right Node
+                      19     
+                      20     
+  0100                21     NODEPOOL_START EQU 0100H
+  0300                22     NODE_LIST_START EQU 0300H
+  0400                23     HUFFMAN_TABLE_START EQU 0400H
+                      24     
+                      25     ; Input String Setting
+0300                  26     ORG 0300H
+0300                  27     INPUT_STRING:
+0300 41424343         28         DB 'ABCCAAA', 0  ; Zero trailed
+0304 41414100                
+                      29     
+0000                  30     ORG 0000H
+0000                  31     MAIN:
+                      32         ; Clear Frequency Table
+0000 7830             33         MOV R0, #30H
+0002 791A             34         MOV R1, #26     ; 26 Number of Character
+0004                  35     CLEAR_FREQ:
+0004 7600             36         MOV @R0, #00H
+0006 08               37         INC R0
+0007 D9FB             38         DJNZ R1, CLEAR_FREQ
+                      39         
+                      40         ; Calculate frequency table
+0009 900300           41         MOV DPTR, #INPUT_STRING    ; Set input string pointer
+000C                  42     COUNT_FREQ:
+000C 7400             43             MOV A, #0
+000E 93               44         MOVC A, @A + DPTR
+000F 600A             45         JZ FREQ_DONE    ; Frequency Calculate Finished
+                      46         
+                      47         ; Increase Frequency
+0011 C3               48             CLR C
+0012 9441             49         SUBB A, #'A'    ; Substract ASCII value of 'A'
+0014 2430             50         ADD A, #30H     ; Add start address #30h to find address refer to character
+0016 F9               51         MOV R1, A
+0017 07               52         INC @R1         ; Add one the the frequency
+                      53         
+0018 A3               54         INC DPTR
+0019 80F1             55         SJMP COUNT_FREQ
+                      56         
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     2
+
+001B                  57     FREQ_DONE:
+                      58             ; Template Buile Up Node
+001B 900100           59             MOV DPTR, #NODEPOOL_START
+001E 7830             60             MOV R0, #30H   ; Point to frequency table
+0020 7F00             61             MOV R7, #0     ; R7 Record Number of Node in List
+0022 755000           62             MOV 50H, #0    ; Initial Node Pool Count
+0025 75A003           63             MOV P2, #03H  ; Point to node list
+0028 7900             64             MOV R1, #00H  ; Point to node list
+002A 7B1A             65             MOV R3, #26   
+                      66             
+                      67             
+002C                  68     INITIAL_BUILD_NEXT_NODE:
+002C E6               69             MOV A, @R0
+002D 6017             70             JZ SKIP_NODE ; Skip if frequency equal to zero
+                      71             
+002F 0F               72             INC R7     ; Increment Node List Count
+0030 0550             73             INC 50H    ; Increment Node Pool Count
+0032 E582             74             MOV A, DPL
+0034 F3               75             MOVX @R1, A
+0035 09               76             INC R1
+0036 E6               77             MOV A, @R0
+0037 F0               78             MOVX @DPTR, A
+0038 A3               79             INC DPTR
+0039 E8               80             MOV A, R0
+003A 9430             81             SUBB A, #30H
+003C 2441             82             ADD A, #'A'
+003E F0               83             MOVX @DPTR, A
+003F A3               84             INC DPTR
+0040 74FF             85             MOV A, #0FFH
+0042 F0               86             MOVX @DPTR, A  ; Initial Null Child Node
+0043 A3               87             INC DPTR
+0044 F0               88             MOVX @DPTR, A
+0045 A3               89             INC DPTR
+                      90             
+0046                  91     SKIP_NODE:
+0046 08               92             INC R0
+0047 DBE3             93             DJNZ R3, INITIAL_BUILD_NEXT_NODE
+                      94     
+                      95     
+                      96     ; Build Huffman Tree
+0049                  97     BUILD_TREE:
+                      98         ; Check if only one node remains (tree is complete)
+0049 EF               99         MOV A, R7
+004A B40103          100         CJNE A, #1, CONTINUE_BUILD
+004D 02010E          101         LJMP BUILD_COMPLETE
+                     102         
+0050                 103     CONTINUE_BUILD:
+0050 758301          104         MOV DPH, #01H   ; Point to node pool
+                     105             ; Find two minimum frequency nodes
+0053 7AFF            106         MOV R2, #0FFH   ; Initialize min 1 frequency to max
+0055 7B00            107         MOV R3, #0      ; min1 node address
+0057 755100          108             MOV 51H, #0     ; Store Min 1 Position in Node List
+                     109         
+005A 7800            110         MOV R0, #00H    ; Point to node list
+005C 75A003          111             MOV P2, #03H    ; Point to node list
+005F EF              112             MOV A, R7
+0060 F9              113         MOV R1, A      ; Number of nodes to check
+0061 755200          114             MOV 52H, #0     ; Initial Current position counter
+                     115         
+0064                 116     FIND_MIN1:
+0064 E2              117             MOVX A, @R0
+0065 F582            118             MOV DPL, A
+                     119             
+0067 E0              120         MOVX A, @DPTR   ; Get frequency
+0068 FC              121             MOV R4, A
+0069 C3              122             CLR C
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     3
+
+006A 9A              123             SUBB A, R2
+006B 5007            124         JNC NEXT_NODE1
+                     125         
+006D EC              126             MOV A, R4
+006E FA              127         MOV R2, A       ; Update min1 frequency
+006F AB82            128         MOV R3, DPL     ; Store min1 node address
+0071 855251          129             MOV 51H, 52H    ; Store position
+                     130         
+0074                 131     NEXT_NODE1:
+0074 0552            132             INC 52H
+0076 08              133             INC R0
+0077 D9EB            134         DJNZ R1, FIND_MIN1
+                     135     
+                     136         ; Find second minimum (similar process)
+0079 7DFF            137         MOV R5, #0FFH   ; Initialize min 2 frequency
+007B 7E00            138         MOV R6, #0      ; min2 node address
+007D 755300          139             MOV 53H, #0     ; Store min2 position in node list
+                     140         
+0080 7800            141         MOV R0, #00H    ; Point to node list
+0082 75A003          142             MOV P2, #03H    ; Point to node list
+0085 EF              143             MOV A, R7
+0086 F9              144         MOV R1, A
+0087 755200          145             MOV 52H, #0
+                     146         
+008A                 147     FIND_MIN2:
+008A E2              148         MOVX A, @R0
+                     149         
+                     150         ; Skip if this is min1 node
+008B FC              151             MOV R4, A
+008C C3              152             CLR C
+008D 9B              153             SUBB A, R3
+008E 6012            154         JZ NEXT_NODE2
+                     155         
+0090 EC              156             MOV A, R4
+0091 F582            157             MOV DPL, A
+0093 E0              158         MOVX A, @DPTR
+                     159             
+0094 FC              160             MOV R4, A
+0095 C3              161             CLR C
+0096 9D              162             SUBB A, R5
+0097 4002            163         JC UPDATE_MIN2
+0099 8007            164         SJMP NEXT_NODE2
+                     165         
+009B                 166     UPDATE_MIN2:
+009B EC              167             MOV A, R4
+009C FD              168         MOV R5, A
+009D AE82            169         MOV R6, DPL
+009F 855253          170             MOV 53H, 52H   ; Store Position
+                     171         
+00A2                 172     NEXT_NODE2:
+00A2 08              173             INC R0
+00A3 0552            174             INC 52H
+00A5 D9E3            175         DJNZ R1, FIND_MIN2
+                     176         
+                     177         ; Create new parent node
+00A7 758301          178         MOV DPH, #01H   ; NODEPOOL_START
+00AA E550            179         MOV A, 50H      ; Get Current Node Pool Count
+00AC 75F004          180             MOV B, #04H     ; Each Node Takes 4 byte
+00AF A4              181             MUL AB          ; A = 50H * 4
+00B0 F582            182             MOV DPL, A      ; Set to next available node
+                     183             
+00B2 0550            184             INC 50H
+                     185         
+                     186         ; Store frequency sum
+00B4 EA              187         MOV A, R2
+00B5 2D              188         ADD A, R5
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     4
+
+00B6 F0              189         MOVX @DPTR, A
+00B7 A3              190         INC DPTR
+                     191         
+                     192         ; Store ASCII (0 for internal node)
+00B8 7400            193         MOV A, #0
+00BA F0              194         MOVX @DPTR, A
+00BB A3              195         INC DPTR
+                     196         
+                     197         ; Store left child
+00BC EB              198         MOV A, R3
+00BD F0              199         MOVX @DPTR, A
+00BE A3              200         INC DPTR
+                     201         
+                     202         ; Store right child
+00BF EE              203         MOV A, R6
+00C0 F0              204         MOVX @DPTR, A
+00C1 A3              205         INC DPTR
+                     206         
+                     207             
+                     208         ; Update Node List - Remove the two min nodes and add the new parent
+                     209         ; First, shift all nodes after min2 position left by 2 bytes
+00C2 75A003          210         MOV P2, #03H    ; Point to node list
+00C5 7800            211             MOV R0, #00H    ; Point to node list
+00C7 E553            212         MOV A, 53H      ; Get min2 position
+00C9 28              213         ADD A, R0       ; R0 points to min2 position
+00CA F8              214         MOV R0, A
+                     215         
+00CB EF              216         MOV A, R7       ; Total nodes
+00CC C3              217         CLR C
+00CD 9553            218         SUBB A, 53H     ; Remaining nodes after min2
+00CF FC              219         MOV R4, A       ; Counter for shifting
+                     220     
+00D0                 221     SHIFT_AFTER_MIN2:
+00D0 E8              222             MOV A, R0
+00D1 2401            223             ADD A, #1
+00D3 F9              224             MOV R1, A
+                     225             
+00D4 E3              226             MOVX A, @R1
+00D5 FB              227             MOV R3, A
+00D6 7400            228             MOV A, #00H
+00D8 F3              229             MOVX @R1, A
+00D9 EB              230             MOV A, R3
+00DA F2              231             MOVX @R0, A
+                     232             
+00DB 08              233             INC R0
+00DC DCF2            234             DJNZ R4, SHIFT_AFTER_MIN2
+                     235             
+                     236         
+                     237         ; Now shift all nodes after min1 position left by 2 bytes
+00DE                 238     SHIFT_MIN1:
+00DE 75A003          239         MOV P2, #03H
+00E1 7800            240             MOV R0, #00H
+00E3 E551            241         MOV A, 51H      ; Get min1 position
+00E5 28              242         ADD A, R0       ; R0 points to min1 position
+00E6 F8              243         MOV R0, A
+                     244         
+00E7 EF              245         MOV A, R7       ; Total nodes
+00E8 C3              246         CLR C
+00E9 9551            247         SUBB A, 51H     ; Remaining nodes after min1
+00EB FC              248         MOV R4, A       ; Counter for shifting
+                     249             
+00EC                 250     SHIFT_AFTER_MIN1:
+00EC E8              251         MOV A, R0
+00ED 2401            252             ADD A, #1
+00EF F9              253             MOV R1, A
+                     254             
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     5
+
+00F0 E3              255             MOVX A, @R1
+00F1 FB              256             MOV R3, A
+00F2 7400            257             MOV A, #00H
+00F4 F3              258             MOVX @R1, A
+00F5 EB              259             MOV A, R3
+00F6 F2              260             MOVX @R0, A
+                     261                     
+00F7 08              262             INC R0
+00F8 DCF2            263             DJNZ R4, SHIFT_AFTER_MIN1
+                     264         
+                     265         ; Add new parent node to end of list
+00FA                 266     ADD_NEW_NODE:
+00FA 75A003          267             MOV P2, #03H    ; Point to node list
+00FD 7800            268         MOV R0, #00H    ; Point to node list
+00FF EF              269         MOV A, R7
+0100 14              270         DEC A
+0101 14              271             DEC A           ; Two nodes removed
+0102 F8              272         MOV R0, A
+                     273        
+0103 E582            274         MOV A, DPL      ; Store new parent node address
+0105 14              275             DEC A
+0106 14              276             DEC A
+0107 14              277             DEC A
+0108 14              278             DEC A
+0109 F2              279         MOVX @R0, A
+                     280         
+                     281         ; Update node count
+010A 1F              282         DEC R7          ; Remove two nodes and add one new node
+                     283         
+010B 020049          284         LJMP BUILD_TREE
+                     285         
+                     286             
+                     287             
+010E                 288     BUILD_COMPLETE:
+                     289         ; Initialize Huffman table generation
+010E 900400          290         MOV DPTR, #HUFFMAN_TABLE_START  
+                     291         
+                     292         ; Clear Huffman table first
+0111 7B34            293         MOV R3, #52    ; 26 characters * 2 bytes
+0113 75A004          294         MOV P2, #04H   ; Point to Huffman table
+0116 7800            295         MOV R0, #00H
+0118                 296     CLEAR_TABLE:
+0118 7400            297         MOV A, #0
+011A F2              298         MOVX @R0, A
+011B 08              299         INC R0
+011C DBFA            300         DJNZ R3, CLEAR_TABLE
+                     301         
+                     302         ; Initialize for code generation
+011E 7A00            303         MOV R2, #00H                    ; Current bit position in code
+0120 757000          304         MOV 70H, #0                     ; Clear temporary storage
+                     305         
+                     306         ; Get root node address from node list
+0123 75A003          307         MOV P2, #03H
+0126 7800            308         MOV R0, #00H
+0128 E2              309         MOVX A, @R0                     ; Get root node address
+0129 FF              310         MOV R7, A                       ; Store root address in R7
+                     311         
+                     312         ; Start recursive traversal
+012A 120130          313         LCALL GENERATE_CODES
+012D 02018E          314         LJMP ENCODE
+                     315     
+                     316     ; Recursive function to generate Huffman codes
+                     317     ; R7: Current node address
+                     318     ; R2: Current bit position in code
+                     319     ; 70H: Temporary storage for code
+0130                 320     GENERATE_CODES:
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     6
+
+0130 C002            321         PUSH 2        ; Save current state
+0132 C007            322         PUSH 7
+0134 C083            323         PUSH DPH
+0136 C082            324         PUSH DPL    ; Save bank select
+                     325         
+0138 758301          326         MOV DPH, #01H ; Point to node pool
+013B 8F82            327         MOV DPL, R7
+                     328         
+                     329         ; Check if leaf node (has ASCII character)
+013D A3              330         INC DPTR      ; Point to ASCII field
+013E E0              331         MOVX A, @DPTR
+013F 6011            332         JZ NOT_LEAF   ; If ASCII is 0, not a leaf
+                     333         
+                     334         
+                     335         ; Set up destination address
+0141 75A004          336         MOV P2, #04H  ; HUFFMAN_TABLE_START high byte
+0144 C3              337             CLR C
+0145 24BF            338         ADD A, #-'A'  ; Convert ASCII to index (A-A = 0)
+0147 C3              339             CLR C
+0148 33              340         RLC A          ; Multiply by 2 to get offset (2 bytes per entry)
+0149 F8              341         MOV R0, A     ; Use R0 for indirect addressing
+                     342         
+                     343         ; Store code length
+014A EA              344         MOV A, R2
+014B F2              345         MOVX @R0, A
+014C 08              346         INC R0
+                     347         
+                     348         ; Store actual code
+014D E570            349         MOV A, 70H
+014F F2              350         MOVX @R0, A
+                     351         
+0150 8033            352         SJMP GENERATE_DONE
+                     353         
+0152                 354     NOT_LEAF:
+                     355         ; Process left child
+0152 A3              356         INC DPTR      ; Point to left child address
+0153 E0              357         MOVX A, @DPTR
+0154 B4FF02          358         CJNE A, #0FFH, HAS_LEFT  ; Check if left child exists
+0157 8013            359         SJMP CHECK_RIGHT
+                     360         
+0159                 361     HAS_LEFT:
+                     362         ; Add 0 to current code
+0159 E570            363         MOV A, 70H
+015B C3              364         CLR C         ; Clear carry (add 0)
+015C 33              365         RLC A         ; Rotate left through carry
+015D F570            366         MOV 70H, A
+015F 0A              367         INC R2        ; Increment bit count
+                     368         
+0160 E0              369         MOVX A, @DPTR
+0161 FF              370         MOV R7, A     ; Set new current node
+0162 120130          371         LCALL GENERATE_CODES
+                     372         
+                     373         ; Remove last bit
+0165 E570            374         MOV A, 70H
+0167 C3              375             CLR C
+0168 13              376         RRC A
+0169 F570            377         MOV 70H, A
+016B 1A              378         DEC R2
+                     379         
+016C                 380     CHECK_RIGHT:
+                     381         ; Process right child
+016C A3              382         INC DPTR      ; Point to right child address
+016D E0              383         MOVX A, @DPTR
+016E B4FF02          384         CJNE A, #0FFH, HAS_RIGHT
+0171 8012            385         SJMP GENERATE_DONE
+                     386         
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     7
+
+0173                 387     HAS_RIGHT:
+                     388         ; Add 1 to current code
+0173 E570            389         MOV A, 70H
+0175 D3              390         SETB C        ; Set carry (add 1)
+0176 33              391         RLC A         ; Rotate left through carry
+0177 F570            392         MOV 70H, A
+0179 0A              393         INC R2        ; Increment bit count
+                     394         
+017A E0              395         MOVX A, @DPTR
+017B FF              396         MOV R7, A     ; Set new current node
+017C 120130          397         LCALL GENERATE_CODES
+                     398         
+                     399         ; Remove last bit
+017F E570            400         MOV A, 70H
+0181 13              401         RRC A
+0182 F570            402         MOV 70H, A
+0184 1A              403         DEC R2
+                     404         
+0185                 405     GENERATE_DONE:
+0185 D082            406         POP DPL
+0187 D083            407         POP DPH     ; Restore state
+0189 D007            408         POP 7
+018B D002            409         POP 2
+018D 22              410         RET
+                     411             
+                     412             
+018E                 413     ENCODE:
+                     414         ; Initial memory position
+018E 7800            415             MOV R0, #0         ; For huffman table pointer
+0190 7901            416         MOV R1, #1         ; For out put possition pointer
+0192 7A00            417         MOV R2, #0         ; Encode length counter
+0194 7B00            418             MOV R3, #0         ; Current word
+0196 7C00            419             MOV R4, #0                 ; Current word length
+0198 7D00            420             MOV R5, #0         ; Encode code
+019A 7E00            421             MOV R6, #0         ; Encode length
+                     422         
+                     423         ; Input string pointer
+019C 900300          424         MOV DPTR, #INPUT_STRING
+                     425         
+019F                 426     ENCODE_NEXT_CHAR:
+                     427         ; Read next character
+019F 7400            428         MOV A, #0
+01A1 93              429         MOVC A, @A+DPTR
+01A2 6036            430         JZ ENCODE_DONE     ; 0 input string over
+                     431         
+                     432         ; Encode character    
+01A4 C3              433             CLR C
+01A5 24BF            434         ADD A, #-'A'
+01A7 C3              435         CLR C
+01A8 33              436         RLC A              ; Multiply 2 to get huffman table index
+                     437         
+                     438         ; Setting Huffman table pointer
+01A9 75A004          439         MOV P2, #04H
+01AC F8              440         MOV R0, A
+                     441         
+                     442         ; Load encode length
+01AD E2              443         MOVX A, @R0
+01AE FE              444         MOV R6, A          ; R6 save encode length
+01AF 08              445         INC R0
+                     446         
+                     447         ; Load huffmann encode code
+01B0 E2              448         MOVX A, @R0
+01B1 FD              449         MOV R5, A          ; R5 save encode code
+                     450         
+                     451         ; Encode Bist
+01B2                 452     ENCODE_BITS:
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     8
+
+                     453             ; Prerotate first
+01B2 7408            454             MOV A, #8
+01B4 9E              455             SUBB A, R6
+01B5 FF              456             MOV R7, A
+01B6 6006            457             JZ START_EXTRACT
+                     458             
+01B8                 459     PREROTATE_LOOP:
+01B8 ED              460             MOV A, R5
+01B9 C3              461             CLR C
+01BA 33              462             RLC A
+01BB FD              463             MOV R5, A
+01BC DFFA            464             DJNZ R7, PREROTATE_LOOP
+                     465     
+01BE                 466     START_EXTRACT:
+                     467         ; Left rotate get bit from carry
+01BE ED              468         MOV A, R5
+01BF 33              469         RLC A              ; Carry
+01C0 FD              470         MOV R5, A
+                     471         
+                     472         ; Add to current word
+01C1 EB              473         MOV A, R3
+01C2 33              474         RLC A
+01C3 FB              475         MOV R3, A
+                     476         
+                     477         ; Inc counter
+01C4 0A              478         INC R2
+01C5 0C              479             INC R4
+                     480         
+                     481         ; Check wether current word is 8 bit
+01C6 EC              482         MOV A, R4
+01C7 5407            483         ANL A, #07H        ; Check lest thrid bit
+01C9 700A            484         JNZ CONTINUE_ENCODE
+                     485         
+                     486         ; Save Current word
+01CB 75A005          487         MOV P2, #05H
+01CE EB              488             MOV A, R3
+01CF F3              489         MOVX @R1, A
+01D0 7B00            490             MOV R3, #0
+01D2 7C00            491             MOV R4, #0
+01D4 09              492             INC R1
+                     493         
+01D5                 494     CONTINUE_ENCODE:
+01D5 DEE7            495         DJNZ R6, START_EXTRACT
+                     496         
+                     497         ; Continue to next character
+01D7 A3              498         INC DPTR
+01D8 80C5            499         SJMP ENCODE_NEXT_CHAR
+                     500     
+01DA                 501     ENCODE_DONE:
+                     502         ; Last word need store
+01DA EC              503         MOV A, R4
+01DB 5407            504         ANL A, #07H
+01DD 6009            505         JZ NO_PARTIAL_BYTE
+                     506         
+01DF                 507     ROTATE_BEFORE_PUSH:
+01DF EB              508         MOV A, R3
+01E0 03              509             RR A
+01E1 FB              510             MOV R3, A
+01E2 DCFB            511             DJNZ R4, ROTATE_BEFORE_PUSH
+                     512             
+01E4 75A005          513         MOV P2, #05H
+01E7 F3              514             MOVX @R1, A
+                     515         
+01E8                 516     NO_PARTIAL_BYTE:
+                     517         ; Store total number of bit
+01E8 7900            518             MOV R1, #00H
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE     9
+
+01EA 75A005          519         MOV P2, #05H
+01ED EA              520             MOV A, R2
+01EE F3              521             MOVX @R1, A
+                     522         
+01EF 80FE            523         SJMP $ 
+                     524     END
+                                     
+                             
+                             
+                             
+                             
+                             
+                             
+A51 MACRO ASSEMBLER  FINAL_PROJECT                                                        12/11/2024 18:28:17 PAGE    10
+
+SYMBOL TABLE LISTING
+------ ----- -------
+
+
+N A M E                  T Y P E  V A L U E   ATTRIBUTES
+
+ADD_NEW_NODE. . . . . .  C ADDR   00FAH   A   
+B . . . . . . . . . . .  D ADDR   00F0H   A   
+BUILD_COMPLETE. . . . .  C ADDR   010EH   A   
+BUILD_TREE. . . . . . .  C ADDR   0049H   A   
+CHECK_RIGHT . . . . . .  C ADDR   016CH   A   
+CLEAR_FREQ. . . . . . .  C ADDR   0004H   A   
+CLEAR_TABLE . . . . . .  C ADDR   0118H   A   
+CONTINUE_BUILD. . . . .  C ADDR   0050H   A   
+CONTINUE_ENCODE . . . .  C ADDR   01D5H   A   
+COUNT_FREQ. . . . . . .  C ADDR   000CH   A   
+DPH . . . . . . . . . .  D ADDR   0083H   A   
+DPL . . . . . . . . . .  D ADDR   0082H   A   
+ENCODE. . . . . . . . .  C ADDR   018EH   A   
+ENCODE_BITS . . . . . .  C ADDR   01B2H   A   
+ENCODE_DONE . . . . . .  C ADDR   01DAH   A   
+ENCODE_NEXT_CHAR. . . .  C ADDR   019FH   A   
+FIND_MIN1 . . . . . . .  C ADDR   0064H   A   
+FIND_MIN2 . . . . . . .  C ADDR   008AH   A   
+FREQ_DONE . . . . . . .  C ADDR   001BH   A   
+GENERATE_CODES. . . . .  C ADDR   0130H   A   
+GENERATE_DONE . . . . .  C ADDR   0185H   A   
+HAS_LEFT. . . . . . . .  C ADDR   0159H   A   
+HAS_RIGHT . . . . . . .  C ADDR   0173H   A   
+HUFFMAN_TABLE_START . .  N NUMB   0400H   A   
+INITIAL_BUILD_NEXT_NODE  C ADDR   002CH   A   
+INPUT_STRING. . . . . .  C ADDR   0300H   A   
+MAIN. . . . . . . . . .  C ADDR   0000H   A   
+NEXT_NODE1. . . . . . .  C ADDR   0074H   A   
+NEXT_NODE2. . . . . . .  C ADDR   00A2H   A   
+NODEPOOL_START. . . . .  N NUMB   0100H   A   
+NODE_LIST_START . . . .  N NUMB   0300H   A   
+NOT_LEAF. . . . . . . .  C ADDR   0152H   A   
+NO_PARTIAL_BYTE . . . .  C ADDR   01E8H   A   
+P2. . . . . . . . . . .  D ADDR   00A0H   A   
+PREROTATE_LOOP. . . . .  C ADDR   01B8H   A   
+ROTATE_BEFORE_PUSH. . .  C ADDR   01DFH   A   
+SHIFT_AFTER_MIN1. . . .  C ADDR   00ECH   A   
+SHIFT_AFTER_MIN2. . . .  C ADDR   00D0H   A   
+SHIFT_MIN1. . . . . . .  C ADDR   00DEH   A   
+SKIP_NODE . . . . . . .  C ADDR   0046H   A   
+START_EXTRACT . . . . .  C ADDR   01BEH   A   
+UPDATE_MIN2 . . . . . .  C ADDR   009BH   A   
+
+
+REGISTER BANK(S) USED: 0 
+
+
+ASSEMBLY COMPLETE.  0 WARNING(S), 0 ERROR(S)
